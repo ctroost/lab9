@@ -1,0 +1,397 @@
+---
+title: "STAT 209: Lab 9"
+author: "Colin Reimer Dawson"
+date: "July 8, 2021"
+output:
+  html_document:
+    css: ~/stat209/originals/lab.css
+    highlight: pygments
+    theme: cerulean
+    code_folding: hide
+    toc: true
+    toc_float: true
+  pdf_document: default
+---
+
+```{r setup, include = FALSE}
+## This is a setup/formatting chunk
+library(tidyverse)
+
+## Some customization.  (Leave this part alone)
+
+theme_set(theme_bw()) # change theme for ggplot2
+
+## Sets default "chunk options"
+knitr::opts_chunk$set(
+  tidy    = FALSE,       # display code as typed
+  size    = "small",     # slightly smaller font for code
+  message = FALSE)  # suppresses some unwanted output
+```
+
+# Reshaping data for fun, profit, and "tidyness"
+
+## Goal
+
+Become comfortable recognizing when reshaping data will make it better suited to the task at hand, and learn how to do so with the `pivot_longer()` and `pivot_wider()` verbs in the `tidyr` package (part of the all-powerful `tidyverse`).
+
+**Note:** The reshaping performed by `pivot_longer()` and `pivot_wider()` was previously done by the verbs `gather()` and `spread()`, respectively. If you have the 1st edition of the textbook, you may have read about these. They still work, but have been superseded by the two `pivot_` functions, which are a bit simpler to use and also more flexible.
+
+
+## The Data
+
+Should we try to squeeze some more insight out of the `babynames` data?  Let's try to squeeze some more insight out of the `babynames` data.  At least to start with.
+
+Let's make sure the relevant packages and datasets are loaded.
+
+**Code:**
+```{r, message = FALSE}
+library(tidyverse)
+library(babynames)
+data(babynames)    ## SSA data
+data(births)       ## Census data
+```
+
+
+### Some preparatory wrangling (and review of joins, etc.)
+
+In the last lab, we joined the Social Security `babynames` data with the Census `births` data to produce a table that had two records of the total number of births in each year; one from each source.
+
+Here's the code we used to do it (below is the "full join" version).
+
+**Code:**
+```{r}
+census_births <- births
+ssa_births <- babynames %>%
+  rename(num_births = n) %>%
+  group_by(year) %>%
+  summarize(
+    num_rows = n(), 
+    births   = sum(num_births))
+total_births <-
+  ssa_births %>%
+  full_join(census_births, by = "year")
+```
+
+To make sure it worked as expected let's take a peek at a random sample of the joined data. Remeber that since a few years are only in one dataset or the other, there will be some missing values (`NA`).
+
+**Code:**
+```{r}
+total_births %>%
+  sample_n(size = 5)
+```
+
+The `births.x` and `births.y` variables are not very descriptive; also we don't care so much about the `num_rows` variable, so let's do some `select`ion (to remove `num_rows`) and `rename`ing (to replace the uninformative names with informative ones).
+
+**Code:**
+```{r}
+total_births <- total_births %>%
+  select(-num_rows) %>%
+  rename(
+    ssa    = births.x, 
+    census = births.y)
+```
+
+Let's look at a random sample from this modified data.
+
+```{r}
+total_births %>% sample_n(size = 5)
+```
+
+
+## Plotting birth counts by source
+
+If we want to visualize the number of births over time from two different sources using two overlaid lines, we have to set the `y` aesthetic separately for each line. 
+
+Also, if we want to use a different color for each source, we have to specify them manually, line by line:
+
+**Code:**
+```{r}
+total_births %>%
+  ggplot(aes(x = year)) +
+  geom_line(aes(y = census), color = "blue", na.rm = TRUE) +
+  geom_line(aes(y = ssa), color = "orange", na.rm = TRUE) +
+  scale_x_continuous(
+    name   = "Year", 
+    breaks = seq(1880,2020,by=10)) + 
+  scale_y_continuous(
+    name   = "Total Births (Millions)", 
+    breaks = seq(0,5000000,1000000),
+    labels = 0:5)
+```
+
+We also don't get a legend to tell us which source is which color. We could create this manually, but this is clunky and error-prone.
+
+For a graph like this, we'd like to be able to create an aesthetic mapping between the `source` of the data and the `color` of the line.  That mapping could then be used to automatically produce a legend.  But `source` isn't a variable in this data; it's distinguished between variables, not between cases.
+
+
+## Stacking data with the `pivot_longer()` function
+
+Thinking about what the legend title and entries would be if we created one gives us a clue about what our dataset is missing: We need a variable called something like `source`, and a single variable to map to the $y$-axis, recording the number of births from the respective source.
+
+We can use `pivot_longer()` for this, as follows:
+
+**Code:**
+```{r}
+births_long <- total_births %>%
+  pivot_longer(
+    cols      = c("census", "ssa"), # these are the columns we're "merging"
+    names_to  = "source",   # this is what we're going to call the new variable
+    values_to = "births",   # this is where the stacked values will go
+    )
+```
+
+```{r}
+## The earliest years are not in the census dataset
+births_long %>% slice_head(n = 5)
+```
+
+Having created the `source` variable and having merged all the counts into a single `births` variable, we can now create the line graph we want quite easily (and we get a legend automatically, since the color of the line now comes from a variable in the data table)
+
+**Code:**
+```{r}
+births_long %>%
+  ggplot(aes(x = year, y = births, color = source)) +
+  geom_line(na.rm = TRUE) +
+  scale_x_continuous(
+    name   = "Year",
+    breaks = seq(1880,2020,by=10)) +
+  scale_y_continuous(
+    name   = "Total Births (Millions)", 
+    breaks = seq(0,5000000,1000000),
+    labels = 0:5)  
+```
+
+
+## The `pivot_wider()` function
+
+Is the "long" format we've created "better" in an absolute sense?  Well, it's better for producing the line graph we wanted, but suppose we wanted to visualize the correlation between the sources with a scatterplot.  For a plot like this, we want one axis to be the number of births according to the SSA, and the other axis to be the number of births according to the Census. This was easy in the original data:
+
+**Code:**
+```{r}
+total_births %>%
+  ggplot(aes(x = ssa, y = census)) +
+  geom_point(na.rm = TRUE) +
+  scale_x_continuous(
+    name   = "Births Recorded by the SSA (Millions)",
+    limits = c(0,5000000),
+    breaks = seq(0,5000000, by = 1000000),
+    labels = 0:5) +
+  scale_y_continuous(
+    name   = "Births Recorded by the Census (Millions)",
+    limits = c(2000000,5000000),
+    breaks = seq(2000000,5000000, by = 1000000),
+    labels = 2:5)
+```
+
+If the data had come to us in the "long" format, however, it would be much less obvious how to create this plot.  It's also not so clear how we'd do something like compute the correlation, or the difference between the estimates in a particular year (I suppose we could use `group_by()` and `summarize()` to do this last one, but it wouldn't be that straightforward).
+
+There may be times when we want to go the other direction: if we want to compute or plot something that depends on ordered pairs (or ordered tuples more generally), such as computing a correlation, or creating a new variable via `mutate()` that depends on both entries, then it is probably easier if the coordinates of those pairs (or tuples) are stored in separate variables.
+
+The `pivot_wider()` function does this:
+
+**Code:**
+```{r, eval = FALSE}
+births_wide <- births_long %>%
+  pivot_wider(
+    names_from  = source, # Unlike with pivot_longer(), this should name an existing variable
+    values_from = births  # Unlike with pivot_longer(), this should name an existing variable
+    )
+```
+
+### Ambiguous Matches
+
+For `pivot_wider()` to work, it needs to know exactly what to put in each new column for each different value of the variable named in `names_from`.  In order for the "wide" format to be well-defined, there must be a unique mapping from each combination of the variables we aren't reshaping (in this case just `year`) to a _value_, for each different _key_.  
+
+If there is more than one row with the same entries in the other variables, `pivot_wider()` won't have any way of knowing which rows to merge. It will still run, but you'll end up with a **list** of the values from the column named in `values_from` that share the same entries elsewhere in a single entry of the widened data table.
+
+To illustrate this, let's create a dataset that has two instances of every row by stacking a second copy of the `births_long` below the first one.
+
+```{r}
+births_long_duplicated <- births_long %>% bind_rows(births_long)
+```
+
+Now let's try to "widen" the result.
+
+```{r}
+births_wide_messy <- births_long_duplicated %>%
+  pivot_wider(
+    names_from  = "source",
+    values_from = "births"
+  )
+```
+
+1. View the `births_wide_messy` data in RStudio's data viewer, and verify that each entry in the `census` and `ssa` columns is a list of two values rather than a single value. Probably not going to do anything nice for us later if we try to use this.
+
+If, as is the case here, the problem is caused by actual duplicate entries in the data, we can just remove these duplicates before passing the data to `pivot_wider()`.  There are multiple ways to do that, but an easy one is just to pass the data to the `distinct()` function, to remove completely redundant rows.
+
+```{r}
+births_long_deduplicated <- births_long_duplicated %>%
+  distinct()
+```
+
+2. Verify that the size of the resulting `births_long_deduplicated` table is the same as the original `births_long` data.
+
+Let's try `pivot_wider()` again on the deduplicated data.
+
+```{r}
+births_wide <- births_long_deduplicated %>%
+  pivot_wider(
+    names_from  = source, 
+    values_from = births)
+```
+
+```{r}
+births_wide %>% slice_head(n = 5)
+```
+
+Looks just like the data we started with (except for the order of the columns, and the removal of the duplicate rows)!
+
+Now we can produce a scatterplot...
+
+**Code:**
+```{r}
+births_wide %>% 
+  ggplot(aes(x = ssa, y = census)) +
+  geom_point(na.rm = TRUE) +
+  scale_x_continuous(
+    name   = "Births Recorded by the SSA (Millions)",
+    limits = c(0,5000000),
+    breaks = seq(0,5000000, by = 1000000),
+    labels = 0:5) +
+  scale_y_continuous(
+    name   = "Births Recorded by the Census (Millions)",
+    limits = c(2000000,5000000),
+    breaks = seq(2000000,5000000, by = 1000000),
+    labels = 2:5)
+```
+
+(which we could do with the original data, but not with the "long" format data; here we're just undoing what we did, but in real applications we will sometimes have data come to us in "long" format and need to convert it to "wide")
+
+We can also do things like compute the correlation between the sources (which also would have been difficult in the "long" form):
+
+**Code:**
+```{r}
+## The cor() function from the mosaic package has a nicer interface than the default cor()
+## function, because it has a data= argument.
+## The use= argument tells cor() how to handle missing data.
+mosaic::cor(census ~ ssa, data = births_wide, use = "pairwise.complete")
+```
+
+or compute and plot the amount of undercounting in the SSA data relative to the Census
+**Code:**
+```{r}
+births_wide %>%
+  mutate(percent_in_ssa = ssa / census * 100) %>%
+  ggplot(aes(x = year, y = percent_in_ssa)) +
+    geom_line(na.rm = TRUE) + 
+    scale_x_continuous(name = "Year") +
+    scale_y_continuous(name = "% of census births recorded by SSA")
+```
+
+There are some things we have tried to do before with the original `babynames` data where widening would have allowed a more concise solution.
+
+For example, recall that the rows in the `babynames` dataset correspond to unique combinations of year, name, and sex. If we wanted to find the total number of births associated with a particular name in a particular year irrespective of sex, we have can use `group_by()` and `summarize()` to get the total by year.
+
+3. Use `filter()`, `group_by()` and `summarize()` to find the number of births for each name in each year from 1950 to 2000. To reduce the size of the data (and the strain on the server), do the `filter()` step separately and save the resulting dataset as `babynames1950to2000`.
+
+---
+
+##### SOLUTION
+
+```{r}
+babynames1950to2000 <- 
+  babynames %>% filter(year %>% between(1950,2000))
+```
+
+```{r}
+babynames1950to2000 %>%
+  group_by(name) %>%
+  summarize(
+    num_births = n())
+```
+
+---
+
+This is fine, but suppose we wanted both the total _and_ the number associated with the two recorded sexes in a single table. Previously this involved the somewhat awkward step of using `ifelse()` with `mutate()` to create two separate count columns, one for each value of `sex`, which contain zeroes if the row doesn't correspond do that sex, then using `group_by()` and `summarize()` to get the totals both overall and by sex for each name in each year.
+
+**Code:**
+```{r}
+babynames1950to2000 %>%
+  rename(num_births = n) %>%
+  mutate(
+    num_if_amab = ifelse(sex == "M", num_births, 0),
+    num_if_afab = ifelse(sex == "F", num_births, 0)) %>%
+  group_by(year, name) %>%
+  summarize(
+    num_amab     = sum(num_if_amab),
+    num_afab     = sum(num_if_afab),
+    total_births = sum(num_births))
+```
+
+4. A more elegant solution to achieve this same thing would be to use `pivot_wider()` to "unstack" the values in the original `n` column into two columns: one for births tagged `"M"`, and one for births tagged `"F"`. Try to get the same result as above using this approach. **Note 1:** Remember that `pivot_wider()` needs the rows it's merging to match exactly by default. In our case, the `prop` variable will throw this off, so use `id_cols = c(year, name)` to tell `pivot_wider()` to match only on `year` and `name`, and not to try to match based on `prop` (or anything else). This will have the effect of removing the data in `prop` from the results. **Note 2:** One of the side effects of using `group_by()` in the previous solution is that the names are sorted in alphabetical order within each year. To get your results in the same order as above, you may want to do `arrange(year, name)` on the final output to sort first by name then by year.
+
+---
+##### SOLUTION
+```{r}
+babynames_wide <- babynames1950to2000 %>% 
+  pivot_wider(
+  id_cols = c(year, name),
+  names_from = "sex",
+  values_from = "n") %>%
+  rename(c("girls" = "F")) %>%
+  rename(c("boys" = "M")) %>%
+  mutate(
+    total_births = ifelse(is.na(girls), boys, 
+                          ifelse(is.na(boys), girls,
+                                 girls + boys))) %>% #puts total births back in the frame, not sure how to get pivot_wider() to preserve columns it's not using
+  arrange(year, name)
+
+
+```
+
+By the way, using the "widened" data, we can quite easily produce a measure of how asymmetrically a name is used for male and female babies.
+
+5. Use the wide data to find the name in each year that has the least asymmetry between male and female births, excluding names given to fewer than 100 babies overall in a given year.
+```{r}
+babynames_wide_largenums <- babynames_wide %>%
+  filter(total_births > 99) %>%
+  replace_na(list(girls = 0)) %>%
+  replace_na(list(boys = 0)) #this took a really long time so I wanted to store it in a variable, won't call it multiple times and take more time
+
+babynames_wide_symmetry <- babynames_wide_largenums %>%
+  mutate(
+    name_symmetry = abs(girls - boys)) %>%
+  group_by(year) %>%
+  slice_min(
+    order_by = name_symmetry)
+
+babynames_wide_symmetry
+```
+
+## Exercises
+6. Find an interesting dataset from the Gapminder repository [here](http://www.gapminder.org/data/) and download the `.csv`.
+
+```{r}
+gapminder_adjusted_gdp <- read_csv(file = "income_per_person_gdppercapita_ppp_inflation_adjusted.csv")
+```
+
+7. Upload the `.csv` file to RStudio (assuming you are working on the server), and read it in using `read_csv()` (the function with an underscore is part of the tidyverse, and tends to work better than the built-in one with a period).  You will need to supply as the argument to `read_csv()` the path to the file _relative_ to the directory where your `.Rmd` is.
+
+8. The cases in the Gapminder datasets are countries.  Use `rename()` to change the first variable name to `country` (since `rename()` expects a variable name _without_ quotes, you may need to surround the original variable name with backticks (the same syntax used to get a code font in Markdown) if it has spaces or special characters.  Pro-tip: never use spaces or special characters (other than underscores) in variable names.
+
+this already exists for my chosen dataset.
+
+**Example:**```{r, eval = FALSE}
+mydata <- mydata %>%
+  rename(country = `Bad Variable Name`)
+
+9. We will convert our data to a format with exactly three columns: `country`, `year`, and `value` (whatever `value` is for your chosen dataset).  _Before you write any code_, sketch _on paper_ what the "tidified" data will look like.  Be sure to indicate how many rows it will have.
+
+10. Use `pivot_longer()` to convert your data into this format.
+
+
+12. The `year` variable may be stored as text instead of as a number, which will make mapping it to a positional visual cue challenging.  Fix this using `mutate()`, with the help of the `parse_date()` function (supplied by the `readr` package, which is _also_ part of the tidyverse).  Type `?parse_date` at the console to see how to use it if it's not clear.
+
+
+
+13. Plot your variable as a time series line graph, mapping `country` to `color`. Post your graph from Exercise 8 to the #lab8 channel.
