@@ -387,11 +387,52 @@ mydata <- mydata %>%
 
 9. We will convert our data to a format with exactly three columns: `country`, `year`, and `value` (whatever `value` is for your chosen dataset).  _Before you write any code_, sketch _on paper_ what the "tidified" data will look like.  Be sure to indicate how many rows it will have.
 
+I wrote it out on paper, it looks like: 
+Country  Year Year...   Country Year Value
+country  value value... country year value
+117 rows (49 columns)   48 <-year columns x (117) = 5,616 rows
+
 10. Use `pivot_longer()` to convert your data into this format.
 
+```{r}
+as.character(colnames(gapminder_adjusted_gdp))
+class(colnames(gapminder_adjusted_gdp))
+
+gapminder_adjusted_gdp <-
+  mutate_at(gapminder_adjusted_gdp, 
+            .vars = vars(2:242),
+            .funs = function(year){ifelse(grepl("k", year), 
+    1000*as.double((gsub("k", "", year))), as.double(year))})
+                                  
+test_set <- gapminder_adjusted_gdp %>%
+  summarize_all(
+    .funs = function(x){sum(is.na(x))})
+
+gapminder_longer <- gapminder_adjusted_gdp %>%
+ pivot_longer(
+    cols = 2:242,
+    names_to = "Year",
+    values_to = "Value")
+
+```
 
 12. The `year` variable may be stored as text instead of as a number, which will make mapping it to a positional visual cue challenging.  Fix this using `mutate()`, with the help of the `parse_date()` function (supplied by the `readr` package, which is _also_ part of the tidyverse).  Type `?parse_date` at the console to see how to use it if it's not clear.
 
-
+```{r}
+gapminder_longer <- gapminder_longer %>%
+  mutate(
+    year = parse_date(Year, "%Y"))
+```
 
 13. Plot your variable as a time series line graph, mapping `country` to `color`. Post your graph from Exercise 8 to the #lab8 channel.
+```{r}
+gapminder_gdp_plot <- gapminder_longer %>% 
+  filter(Year %in% c(2000:2020)) %>%
+  ggplot(aes(x = Year, y = Value)) +
+  geom_line(stat = "identity", aes(x = as.numeric(Year), y = Value, colour = country)) +
+  ggtitle("GDP per Capita for a Buncha Countries", subtitle = "had to hide the legend to show the graph :0") +
+  theme(legend.position = "none")
+
+gapminder_gdp_plot
+```
+
